@@ -35,8 +35,13 @@ function loadEnvManual(envPath: string): Record<string, string> {
 }
 
 const env = loadEnvManual(path.join(root, '.env'));
-const apiKey = env.VITE_GEMINI_API_KEY || env.GEMINI_API_KEY || '';
-if (!apiKey) console.warn('[Vite] GEMINI_API_KEY not found in .env');
+const apiKey =
+  process.env.VITE_GEMINI_API_KEY ||
+  process.env.GEMINI_API_KEY ||
+  env.VITE_GEMINI_API_KEY ||
+  env.GEMINI_API_KEY ||
+  '';
+if (!apiKey) console.warn('[Vite] GEMINI_API_KEY not found (check .env locally or Vercel env vars)');
 
 export default defineConfig({
   root,

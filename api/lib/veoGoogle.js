@@ -5,7 +5,7 @@
 
 export const V1BETA = 'https://generativelanguage.googleapis.com/v1beta';
 
-/** 默认使用标准版：支持 referenceImages + 文案同时提交 */
+/** 默认标准版：`referenceImages` + `inlineData`（Fast 不支持，见 veoSupportsReferenceImages） */
 export const DEFAULT_VEO_MODEL = 'veo-3.1-generate-preview';
 
 /**
@@ -18,9 +18,8 @@ export function resolveVeoModel(explicit) {
 }
 
 /**
- * Veo **Fast** 模型不接受 referenceImages 里的 inlineData，会报错：
- * `inlineData isn't supported by this model`.
- * 参考图仅适用于非 Fast 的 3.1 预览（如 veo-3.1-generate-preview）。
+ * Veo **Fast** 不接受 referenceImages 里的 inlineData（会报 inlineData isn't supported）。
+ * `veo-3.1-generate-preview` 等非 Fast 型号可带参考图。
  * @param {string} modelId
  */
 export function veoSupportsReferenceImages(modelId) {
@@ -29,10 +28,9 @@ export function veoSupportsReferenceImages(modelId) {
 }
 
 /**
- * 标准版必须与 prompt 同时提供至少一张参考图。
  * @param {string} modelId
  * @param {string} prompt
- * @param {unknown[] | undefined} referenceImages 已校验后的数组
+ * @param {unknown[] | undefined} referenceImages
  * @returns {{ ok: true } | { ok: false; error: string }}
  */
 export function validateVeoStartInputs(modelId, prompt, referenceImages) {
@@ -43,7 +41,7 @@ export function validateVeoStartInputs(modelId, prompt, referenceImages) {
     return {
       ok: false,
       error:
-        '标准版 Veo 需要分镜文案与至少一张参考图（商品或模特）同时提交。请上传图片后重试，或改用 Fast 模型（VEO_MODEL 含 fast，且可不传参考图）。',
+        'veo-3.1-generate-preview 需要分镜文案与至少一张参考图。请先上传商品或模特图；若仅用文案可设 VEO_MODEL=veo-3.1-fast-generate-preview。',
     };
   }
   return { ok: true };
@@ -65,10 +63,7 @@ export async function veoStart(apiKey, opts) {
 
   const instance = { prompt: opts.prompt };
   let referenceImagesAttached = false;
-  if (
-    opts.referenceImages?.length &&
-    veoSupportsReferenceImages(model)
-  ) {
+  if (opts.referenceImages?.length && veoSupportsReferenceImages(model)) {
     instance.referenceImages = opts.referenceImages.slice(0, 3).map((ref) => ({
       image: {
         inlineData: {
@@ -83,6 +78,7 @@ export async function veoStart(apiKey, opts) {
 
   const referenceImagesSkipped =
     (opts.referenceImages?.length || 0) > 0 && !referenceImagesAttached;
+
   const parameters = {};
   if (opts.aspectRatio) parameters.aspectRatio = opts.aspectRatio;
   if (opts.resolution) parameters.resolution = opts.resolution;

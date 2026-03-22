@@ -177,7 +177,9 @@ function geminiDevPlugin(serverApiKey: string) {
           res.end(JSON.stringify({ error: 'Missing "prompt"' }));
           return;
         }
-        let refs: Array<{ mimeType: string; data: string; referenceType?: string }> | undefined;
+        let refs:
+          | Array<{ mimeType: string; data: string; referenceType?: string }>
+          | undefined;
         if (Array.isArray(body.referenceImages) && body.referenceImages.length > 0) {
           refs = body.referenceImages
             .filter((r) => r?.data && r?.mimeType)

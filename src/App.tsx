@@ -58,11 +58,11 @@ export default function App() {
   const [videoError, setVideoError] = useState<string | null>(null);
   const [geminiModelLabel, setGeminiModelLabel] = useState<string | null>(null);
   const [veoModelLabel, setVeoModelLabel] = useState<string | null>(null);
-  /** Veo Fast 会跳过 referenceImages；提示用户可选标准模型 */
+  /** 使用 Fast 时服务端会去掉参考图 */
   const [veoRefSkippedNote, setVeoRefSkippedNote] = useState<string | null>(null);
 
   const enableVeo = import.meta.env.VITE_ENABLE_VEO !== 'false';
-  /** 与默认 VEO_MODEL 对齐：未设置时按标准版，需参考图 */
+  /** 与 VEO_MODEL 一致时：含 fast 则不要求参考图 */
   const veoClientIsFast = String(import.meta.env.VITE_VEO_MODEL || '')
     .toLowerCase()
     .includes('fast');
@@ -90,7 +90,7 @@ export default function App() {
     return out;
   };
 
-  /** Veo 最多 3 张参考图：优先商品主视图、模特、另一商品角度 */
+  /** Veo 最多 3 张：商品主视图、模特、另一角度（仅 veo-3.1-generate-preview 等会提交） */
   const collectReferenceImagesForVeo = async (): Promise<
     { mimeType: string; data: string; referenceType: string }[]
   > => {
@@ -248,16 +248,16 @@ Output in Chinese for the shot list. Be specific so a video generator can follow
 
       if (!veoClientIsFast && referenceImages.length === 0) {
         setVideoError(
-          '标准版 Veo 需要分镜文案与至少一张参考图（商品或模特）同时提交。请先上传图片后再生成视频。',
+          'veo-3.1-generate-preview 需要至少一张参考图（商品或模特）。请先上传图片，或设置 VITE_VEO_MODEL / VEO_MODEL 为含 fast 的型号以仅文案生成。',
         );
         setGenerationProgress(100);
         setLoadingHint('');
         return;
       }
 
-      const veoPrompt = `Vertical 9:16 e-commerce fashion video, 8 seconds, cinematic lighting, smooth camera moves, no on-screen text. 
+      const veoPrompt = `Vertical 9:16 e-commerce fashion video, 8 seconds, cinematic lighting, smooth camera moves, no on-screen text.
 
-CRITICAL: Match the reference images exactly — same garment (colors, cut, fabric) and the same person/model appearance when a model reference is included. Do not invent different clothing or faces.
+CRITICAL: Match the reference images — same garment (colors, cut, fabric) and the same person/model look when a model reference is included.
 
 Shot plan and mood (follow closely):
 ${text.slice(0, 5500)}`;
@@ -288,8 +288,10 @@ ${text.slice(0, 5500)}`;
       setVeoModelLabel(startData.model ?? null);
       if (startData.referenceImagesSkipped) {
         setVeoRefSkippedNote(
-          '当前为 Veo Fast，实拍参考图未传入视频 API（仅分镜文案驱动成片）。若需在视频中强约束商品/模特外观，请在服务端设置 VEO_MODEL=veo-3.1-generate-preview。',
+          '当前为 Veo Fast，参考图未传入视频 API（仅分镜文案驱动）。标准版+参考图请使用 veo-3.1-generate-preview。',
         );
+      } else {
+        setVeoRefSkippedNote(null);
       }
 
       const maxPolls = 90;
@@ -693,7 +695,7 @@ ${text.slice(0, 5500)}`;
                         <span className="text-xs text-gray-500 bg-white/60 px-2 py-1 rounded-full">
                           {enableVeo && !videoBlobUrl && !videoError
                             ? '请确认分镜后点击下方生成视频'
-                            : '已接入视觉：Gemini 看图写分镜 · 标准版 Veo（文案与参考图同时提交）'}
+                            : '已接入视觉：Gemini 看图写分镜 · Veo 3.1 标准版可传参考图'}
                         </span>
                       </div>
                       <p className="text-[11px] text-gray-500 leading-relaxed">
@@ -707,9 +709,7 @@ ${text.slice(0, 5500)}`;
                         {!geminiModelLabel && !veoModelLabel && (
                           <span>
                             视频默认 <code className="bg-gray-100 px-1 rounded">veo-3.1-generate-preview</code>
-                            （标准版，需文案+参考图）；Fast 请设 <code className="bg-gray-100 px-1">VEO_MODEL</code> 为{' '}
-                            <code className="bg-gray-100 px-1">veo-3.1-fast-generate-preview</code>，并可选{' '}
-                            <code className="bg-gray-100 px-1">VITE_VEO_MODEL</code> 同步
+                            （文案+参考图）；仅文案可设 <code className="bg-gray-100 px-1">VEO_MODEL=veo-3.1-fast-generate-preview</code>
                           </span>
                         )}
                       </p>

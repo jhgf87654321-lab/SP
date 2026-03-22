@@ -28,6 +28,11 @@ View your app in AI Studio: https://ai.studio/apps/464761d2-446c-44af-920e-25494
 
 **Vercel:** Add **`GEMINI_API_KEY`** under Project → Settings → Environment Variables (server-side only; do not rely on browser calls to Google — they are blocked in some regions). Redeploy after saving.
 
-- `GEMINI_API_KEY`: Required for AI generation (via `/api/gemini`)
+- `GEMINI_API_KEY`: Required for AI generation (via `/api/gemini`, `/api/video-*`)
 - `GEMINI_MODEL`: Optional, default `gemini-2.5-flash`
+- `VEO_MODEL`: Optional, default `veo-3.1-fast-generate-preview` (see [Veo pricing](https://ai.google.dev/gemini-api/docs/pricing#veo-3.1))
+- `VEO_ASPECT_RATIO`: Optional, default `9:16`
+- `VITE_ENABLE_VEO`: Set to `false` in Vercel env if you only want storyboard text (no video API calls)
 - `APP_URL`: Optional app URL for local/dev notes
+
+Video generation uses **Google Veo** (long-running job + polling). On Vercel, use a plan that allows **long enough function duration** for `/api/video-proxy` (see `vercel.json`).

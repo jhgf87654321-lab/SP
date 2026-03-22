@@ -1,3 +1,8 @@
 {
-  "rewrites": [{ "source": "/((?!api/).*)", "destination": "/index.html" }]
+  "rewrites": [{ "source": "/((?!api/).*)", "destination": "/index.html" }],
+  "functions": {
+    "api/video-proxy.js": { "maxDuration": 120 },
+    "api/video-start.js": { "maxDuration": 60 },
+    "api/video-status.js": { "maxDuration": 30 }
+  }
 }

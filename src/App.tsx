@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { Upload, Image as ImageIcon, Video, Play, CheckCircle2, Loader2, Sparkles, User, Settings2, ChevronRight } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import { Upload, Video, Play, CheckCircle2, Loader2, Sparkles } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 // Mock data for presets
 const PRESET_MODELS = [
@@ -43,10 +43,26 @@ export default function App() {
   const [selectedModel, setSelectedModel] = useState(PRESET_MODELS[0].id);
   const [customModelImg, setCustomModelImg] = useState<string | null>(null);
   const [selectedScript, setSelectedScript] = useState(SCRIPTS[0].id);
-  const [isGenerating, setIsGenerating] = useState(false);
+  const [isGeneratingStoryboard, setIsGeneratingStoryboard] = useState(false);
+  const [isGeneratingVideo, setIsGeneratingVideo] = useState(false);
+  const isGenerating = isGeneratingStoryboard || isGeneratingVideo;
   const [generationProgress, setGenerationProgress] = useState(0);
-  const [videoUrl, setVideoUrl] = useState<string | null>(null);
+  /** AI 分镜文案（Gemini） */
+  const [storyboardText, setStoryboardText] = useState<string | null>(null);
+  /** Veo 生成视频的本地 blob URL */
+  const [videoBlobUrl, setVideoBlobUrl] = useState<string | null>(null);
+  const [loadingHint, setLoadingHint] = useState('');
   const [error, setError] = useState<string | null>(null);
+  /** Veo 失败但分镜成功时的提示 */
+  const [videoError, setVideoError] = useState<string | null>(null);
+
+  const enableVeo = import.meta.env.VITE_ENABLE_VEO !== 'false';
+
+  useEffect(() => {
+    return () => {
+      if (videoBlobUrl) URL.revokeObjectURL(videoBlobUrl);
+    };
+  }, [videoBlobUrl]);
 
   const handleImageUpload = (angle: 'front' | 'back' | 'side', e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -71,10 +87,16 @@ export default function App() {
       return;
     }
 
-    setIsGenerating(true);
+    setIsGeneratingStoryboard(true);
     setGenerationProgress(0);
-    setVideoUrl(null);
+    setStoryboardText(null);
+    setVideoError(null);
+    if (videoBlobUrl) {
+      URL.revokeObjectURL(videoBlobUrl);
+      setVideoBlobUrl(null);
+    }
     setError(null);
+    setLoadingHint('正在编写分镜文案…');
 
     const selectedScriptData = SCRIPTS.find(s => s.id === selectedScript);
     const selectedModelData =
@@ -96,14 +118,8 @@ Available images:
 Please provide a detailed video generation scenario that matches the script requirements and product showcase needs.`;
 
     const progressInterval = setInterval(() => {
-      setGenerationProgress((prev) => {
-        if (prev >= 90) {
-          clearInterval(progressInterval);
-          return 90;
-        }
-        return prev + 10;
-      });
-    }, 500);
+      setGenerationProgress((prev) => (prev >= 92 ? 92 : prev + 6));
+    }, 350);
 
     try {
       const res = await fetch('/api/gemini', {
@@ -112,9 +128,6 @@ Please provide a detailed video generation scenario that matches the script requ
         body: JSON.stringify({ prompt }),
       });
       const data = (await res.json()) as { text?: string; error?: string };
-
-      clearInterval(progressInterval);
-      setGenerationProgress(100);
 
       if (!res.ok) {
         const msg = data.error || res.statusText || '请求失败';
@@ -128,23 +141,165 @@ Please provide a detailed video generation scenario that matches the script requ
         return;
       }
 
-      if (data.text) console.log('[Generate] OK, length:', data.text.length);
-      setVideoUrl('https://storage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4');
+      const text = (data.text ?? '').trim();
+      if (!text) {
+        setError('模型未返回有效文案，请重试。');
+        return;
+      }
+      setStoryboardText(text);
+      setGenerationProgress(100);
+      setLoadingHint('');
     } catch (err) {
-      clearInterval(progressInterval);
       console.error('[Generate]', err);
       setError(err instanceof Error ? err.message : '生成过程中发生错误');
     } finally {
-      setIsGenerating(false);
+      clearInterval(progressInterval);
+      setIsGeneratingStoryboard(false);
+    }
+  };
+
+  /** 用户确认分镜后，再调用 Veo 生成视频 */
+  const handleConfirmVideo = async () => {
+    if (!storyboardText?.trim()) return;
+    if (!enableVeo) return;
+
+    setIsGeneratingVideo(true);
+    setVideoError(null);
+    if (videoBlobUrl) {
+      URL.revokeObjectURL(videoBlobUrl);
+      setVideoBlobUrl(null);
+    }
+    setGenerationProgress(0);
+    setLoadingHint('已提交 Google Veo，正在渲染视频（通常 1–6 分钟）…');
+
+    const progressInterval = setInterval(() => {
+      setGenerationProgress((prev) => (prev >= 92 ? 92 : prev + 2));
+    }, 2000);
+
+    const text = storyboardText;
+
+    try {
+      const veoPrompt = `Professional vertical (9:16) e-commerce fashion video, 8 seconds, cinematic lighting, smooth camera, no text overlays unless subtle brand feel. Follow this shot plan and mood:
+
+${text.slice(0, 6000)}`;
+
+      const startRes = await fetch('/api/video-start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          prompt: veoPrompt,
+          aspectRatio: '9:16',
+        }),
+      });
+      const startData = (await startRes.json()) as {
+        operationName?: string;
+        error?: string;
+      };
+
+      if (!startRes.ok || !startData.operationName) {
+        setVideoError(startData.error || startRes.statusText || '无法启动视频生成');
+        setGenerationProgress(100);
+        setLoadingHint('');
+        return;
+      }
+
+      const maxPolls = 90;
+      let videoUri: string | null = null;
+      for (let i = 0; i < maxPolls; i++) {
+        await new Promise((r) => setTimeout(r, 8000));
+        setGenerationProgress(5 + Math.min(85, Math.floor((i / maxPolls) * 85)));
+
+        const stRes = await fetch('/api/video-status', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ operationName: startData.operationName }),
+        });
+        const st = (await stRes.json()) as {
+          done?: boolean;
+          error?: string;
+          videoUri?: string;
+        };
+
+        if (!stRes.ok) {
+          setVideoError(st.error || '轮询任务状态失败');
+          setGenerationProgress(100);
+          setLoadingHint('');
+          return;
+        }
+        if (st.done && st.error) {
+          setVideoError(st.error);
+          setGenerationProgress(100);
+          setLoadingHint('');
+          return;
+        }
+        if (st.done && st.videoUri) {
+          videoUri = st.videoUri;
+          break;
+        }
+      }
+
+      if (!videoUri) {
+        setVideoError('视频生成超时，请稍后重试');
+        setGenerationProgress(100);
+        setLoadingHint('');
+        return;
+      }
+
+      setLoadingHint('正在下载成片…');
+      setGenerationProgress(95);
+      const proxyRes = await fetch('/api/video-proxy', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ videoUri }),
+      });
+
+      if (!proxyRes.ok) {
+        const errText = await proxyRes.text();
+        let msg = errText;
+        try {
+          msg = JSON.parse(errText).error || errText;
+        } catch {
+          /* keep */
+        }
+        setVideoError(msg || '下载视频失败');
+        setGenerationProgress(100);
+        setLoadingHint('');
+        return;
+      }
+
+      const blob = await proxyRes.blob();
+      const url = URL.createObjectURL(blob);
+      setVideoBlobUrl(url);
+      setGenerationProgress(100);
+      setLoadingHint('');
+    } catch (err) {
+      console.error('[Veo]', err);
+      setVideoError(err instanceof Error ? err.message : '视频生成失败');
+      setGenerationProgress(100);
+      setLoadingHint('');
+    } finally {
+      clearInterval(progressInterval);
+      setIsGeneratingVideo(false);
     }
   };
 
   const reset = () => {
     setImages({ front: null, back: null, side: null });
-    setVideoUrl(null);
+    setStoryboardText(null);
+    setVideoError(null);
+    if (videoBlobUrl) URL.revokeObjectURL(videoBlobUrl);
+    setVideoBlobUrl(null);
     setGenerationProgress(0);
     setError(null);
+    setLoadingHint('');
   };
+
+  /** 底部「生成分镜」：已有分镜则禁用（需「重新生成」清空后再试） */
+  const storyboardButtonDisabled =
+    isGenerating || !!storyboardText;
+
+  const storyboardFlowDone =
+    !!storyboardText && (!enableVeo || !!videoBlobUrl) && !videoError;
 
   return (
     <div className="min-h-screen p-4 md:p-8 flex items-center justify-center font-sans">
@@ -351,7 +506,7 @@ Please provide a detailed video generation scenario that matches the script requ
                       Try Again
                     </button>
                   </motion.div>
-                ) : !isGenerating && !videoUrl ? (
+                ) : !isGenerating && !storyboardText ? (
                   <motion.div 
                     key="empty"
                     initial={{ opacity: 0 }}
@@ -399,18 +554,33 @@ Please provide a detailed video generation scenario that matches the script requ
                         <span className="text-2xl font-bold text-purple-600">{generationProgress}%</span>
                       </div>
                     </div>
-                    <h3 className="text-lg font-semibold text-gray-700 mb-2 animate-pulse">Synthesizing Video...</h3>
+                    <h3 className="text-lg font-semibold text-gray-700 mb-2 animate-pulse">
+                      {loadingHint ||
+                        (isGeneratingVideo
+                          ? '正在生成视频…'
+                          : '正在生成分镜方案…')}
+                    </h3>
                     <div className="space-y-2 w-full max-w-[200px]">
-                      <div className="flex items-center gap-2 text-xs text-gray-500">
-                        <CheckCircle2 className="w-3 h-3 text-teal-500" /> Extracting details
-                      </div>
-                      <div className="flex items-center gap-2 text-xs text-gray-500">
-                        <CheckCircle2 className="w-3 h-3 text-teal-500" /> Applying model rigging
-                      </div>
-                      <div className="flex items-center gap-2 text-xs text-gray-500">
-                        {generationProgress > 50 ? <CheckCircle2 className="w-3 h-3 text-teal-500" /> : <Loader2 className="w-3 h-3 animate-spin" />} 
-                        Rendering storyboard
-                      </div>
+                      {!isGeneratingVideo ? (
+                        <>
+                          <div className="flex items-center gap-2 text-xs text-gray-500">
+                            <CheckCircle2 className="w-3 h-3 text-teal-500" /> 分析脚本与商品信息
+                          </div>
+                          <div className="flex items-center gap-2 text-xs text-gray-500">
+                            {generationProgress > 30 ? <CheckCircle2 className="w-3 h-3 text-teal-500" /> : <Loader2 className="w-3 h-3 animate-spin" />}
+                            编写分镜与描述
+                          </div>
+                        </>
+                      ) : (
+                        <>
+                          <div className="flex items-center gap-2 text-xs text-gray-500">
+                            <CheckCircle2 className="w-3 h-3 text-teal-500" /> Veo 任务已提交
+                          </div>
+                          <div className="flex items-center gap-2 text-xs text-gray-500">
+                            <Loader2 className="w-3 h-3 animate-spin" /> 云端渲染中，请耐心等待
+                          </div>
+                        </>
+                      )}
                     </div>
                   </motion.div>
                 ) : (
@@ -418,27 +588,62 @@ Please provide a detailed video generation scenario that matches the script requ
                     key="result"
                     initial={{ opacity: 0, scale: 0.95 }}
                     animate={{ opacity: 1, scale: 1 }}
-                    className="flex-grow flex flex-col"
+                    className="flex-grow flex flex-col min-h-0 p-4"
                   >
-                    <div className="relative flex-grow rounded-[1.5rem] overflow-hidden bg-black shadow-inner">
-                      <video 
-                        src={videoUrl!} 
-                        className="w-full h-full object-cover"
-                        autoPlay 
-                        loop 
-                        muted 
-                        controls
-                      />
+                    <div className="flex items-center justify-between gap-2 mb-3 flex-wrap">
+                      <h3 className="text-lg font-semibold text-purple-800">生成结果</h3>
+                      <span className="text-xs text-gray-500 bg-white/60 px-2 py-1 rounded-full">
+                        {enableVeo && !videoBlobUrl && !videoError
+                          ? '请确认分镜后点击下方生成视频'
+                          : '分镜：Gemini · 视频：Veo'}
+                      </span>
                     </div>
-                    <div className="p-4 flex justify-between items-center">
-                      <button className="text-sm font-medium text-purple-600 hover:text-purple-800 transition-colors flex items-center gap-1">
-                        <Settings2 className="w-4 h-4" /> Tweak Settings
+                    {videoBlobUrl && (
+                      <div className="relative rounded-[1.25rem] overflow-hidden bg-black shadow-inner mb-3 aspect-[9/16] max-h-[320px] mx-auto w-full max-w-[200px]">
+                        <video
+                          src={videoBlobUrl}
+                          className="w-full h-full object-contain"
+                          controls
+                          playsInline
+                          preload="metadata"
+                        />
+                      </div>
+                    )}
+                    {videoError && (
+                      <div className="mb-3 rounded-xl bg-amber-50 border border-amber-200 px-3 py-2 text-sm text-amber-900">
+                        <strong>视频未生成：</strong>
+                        {videoError}
+                      </div>
+                    )}
+                    <div className="relative flex-grow rounded-[1.25rem] overflow-y-auto bg-white/70 border border-purple-100/80 shadow-inner min-h-[200px] max-h-[320px]">
+                      <p className="text-xs font-semibold text-purple-700 px-4 pt-3">分镜 / 描述文案</p>
+                      <pre className="whitespace-pre-wrap text-sm text-gray-700 p-4 pt-1 font-sans leading-relaxed">
+                        {storyboardText}
+                      </pre>
+                    </div>
+                    {enableVeo && !isGeneratingVideo && !videoBlobUrl && (
+                      <button
+                        type="button"
+                        onClick={() => void handleConfirmVideo()}
+                        className="mt-3 w-full py-3.5 rounded-full liquid-btn-purple text-base font-semibold flex items-center justify-center gap-2"
+                      >
+                        <Play className="w-5 h-5 fill-current" />
+                        {videoError ? '重新生成视频' : '确认生成视频'}
+                      </button>
+                    )}
+                    <div className="p-2 pt-4 flex flex-wrap justify-between items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => storyboardText && navigator.clipboard.writeText(storyboardText)}
+                        className="text-sm font-medium text-purple-600 hover:text-purple-800 transition-colors"
+                      >
+                        复制全文
                       </button>
                       <button 
                         onClick={reset}
                         className="liquid-btn-teal px-6 py-2 text-sm"
                       >
-                        Create Another
+                        清空并重来
                       </button>
                     </div>
                   </motion.div>
@@ -450,28 +655,38 @@ Please provide a detailed video generation scenario that matches the script requ
             <div className="mt-6 space-y-3">
               <button 
                 type="button"
-                onClick={() => handleGenerate()}
-                disabled={isGenerating || !!videoUrl}
+                onClick={() => void handleGenerate()}
+                disabled={storyboardButtonDisabled}
                 className={`w-full py-4 text-lg flex items-center justify-center gap-2 ${
-                  isGenerating || videoUrl 
+                  storyboardButtonDisabled 
                     ? 'bg-gray-200 text-gray-400 rounded-full cursor-not-allowed' 
                     : 'liquid-btn-purple'
                 }`}
               >
-                {isGenerating ? (
+                {isGeneratingStoryboard ? (
                   <>
                     <Loader2 className="w-6 h-6 animate-spin" />
-                    Processing...
+                    正在生成分镜…
                   </>
-                ) : videoUrl ? (
+                ) : isGeneratingVideo ? (
+                  <>
+                    <Loader2 className="w-6 h-6 animate-spin" />
+                    正在生成视频…
+                  </>
+                ) : storyboardFlowDone ? (
                   <>
                     <CheckCircle2 className="w-6 h-6" />
-                    Completed
+                    已完成
+                  </>
+                ) : storyboardText && enableVeo && !videoBlobUrl ? (
+                  <>
+                    <Sparkles className="w-5 h-5" />
+                    请在右侧确认视频
                   </>
                 ) : (
                   <>
                     <Play className="w-5 h-5 fill-current" />
-                    Generate Video
+                    生成分镜文案
                   </>
                 )}
               </button>

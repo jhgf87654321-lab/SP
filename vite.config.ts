@@ -4,6 +4,7 @@ import react from '@vitejs/plugin-react';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { defineConfig } from 'vite';
+import { veoFetchVideo, veoPoll, veoStart } from './api/lib/veoGoogle.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname);
@@ -114,6 +115,145 @@ function geminiDevPlugin(serverApiKey: string) {
               error: e instanceof Error ? e.message : 'Upstream request failed',
             }),
           );
+        }
+      });
+      server.middlewares.use('/api/video-start', async (req, res, next) => {
+        if (req.method !== 'POST') {
+          next();
+          return;
+        }
+        res.setHeader('Content-Type', 'application/json; charset=utf-8');
+        if (!serverApiKey) {
+          res.statusCode = 500;
+          res.end(JSON.stringify({ error: 'GEMINI_API_KEY missing' }));
+          return;
+        }
+        let body: { prompt?: string; aspectRatio?: string; resolution?: string; model?: string };
+        try {
+          const raw = await new Promise<string>((resolve, reject) => {
+            const chunks: Buffer[] = [];
+            req.on('data', (c: Buffer) => chunks.push(Buffer.from(c)));
+            req.on('end', () => resolve(Buffer.concat(chunks).toString('utf-8')));
+            req.on('error', reject);
+          });
+          body = raw ? JSON.parse(raw) : {};
+        } catch {
+          res.statusCode = 400;
+          res.end(JSON.stringify({ error: 'Invalid JSON' }));
+          return;
+        }
+        if (!body.prompt || typeof body.prompt !== 'string') {
+          res.statusCode = 400;
+          res.end(JSON.stringify({ error: 'Missing "prompt"' }));
+          return;
+        }
+        try {
+          const out = await veoStart(serverApiKey, {
+            prompt: body.prompt.slice(0, 8000),
+            aspectRatio: body.aspectRatio || process.env.VEO_ASPECT_RATIO || '9:16',
+            resolution: body.resolution || process.env.VEO_RESOLUTION,
+            model: body.model,
+          });
+          res.statusCode = 200;
+          res.end(JSON.stringify(out));
+        } catch (e) {
+          res.statusCode = 502;
+          res.end(
+            JSON.stringify({
+              error: e instanceof Error ? e.message : 'Veo start failed',
+            }),
+          );
+        }
+      });
+      server.middlewares.use('/api/video-status', async (req, res, next) => {
+        if (req.method !== 'POST') {
+          next();
+          return;
+        }
+        res.setHeader('Content-Type', 'application/json; charset=utf-8');
+        if (!serverApiKey) {
+          res.statusCode = 500;
+          res.end(JSON.stringify({ error: 'GEMINI_API_KEY missing' }));
+          return;
+        }
+        let body: { operationName?: string };
+        try {
+          const raw = await new Promise<string>((resolve, reject) => {
+            const chunks: Buffer[] = [];
+            req.on('data', (c: Buffer) => chunks.push(Buffer.from(c)));
+            req.on('end', () => resolve(Buffer.concat(chunks).toString('utf-8')));
+            req.on('error', reject);
+          });
+          body = raw ? JSON.parse(raw) : {};
+        } catch {
+          res.statusCode = 400;
+          res.end(JSON.stringify({ error: 'Invalid JSON' }));
+          return;
+        }
+        if (!body.operationName) {
+          res.statusCode = 400;
+          res.end(JSON.stringify({ error: 'Missing operationName' }));
+          return;
+        }
+        try {
+          const out = await veoPoll(serverApiKey, body.operationName);
+          res.statusCode = 200;
+          res.end(JSON.stringify(out));
+        } catch (e) {
+          res.statusCode = 502;
+          res.end(JSON.stringify({ error: e instanceof Error ? e.message : 'Poll failed' }));
+        }
+      });
+      server.middlewares.use('/api/video-proxy', async (req, res, next) => {
+        if (req.method !== 'POST') {
+          next();
+          return;
+        }
+        if (!serverApiKey) {
+          res.setHeader('Content-Type', 'application/json; charset=utf-8');
+          res.statusCode = 500;
+          res.end(JSON.stringify({ error: 'GEMINI_API_KEY missing' }));
+          return;
+        }
+        let body: { videoUri?: string };
+        try {
+          const raw = await new Promise<string>((resolve, reject) => {
+            const chunks: Buffer[] = [];
+            req.on('data', (c: Buffer) => chunks.push(Buffer.from(c)));
+            req.on('end', () => resolve(Buffer.concat(chunks).toString('utf-8')));
+            req.on('error', reject);
+          });
+          body = raw ? JSON.parse(raw) : {};
+        } catch {
+          res.setHeader('Content-Type', 'application/json; charset=utf-8');
+          res.statusCode = 400;
+          res.end(JSON.stringify({ error: 'Invalid JSON' }));
+          return;
+        }
+        if (!body.videoUri) {
+          res.setHeader('Content-Type', 'application/json; charset=utf-8');
+          res.statusCode = 400;
+          res.end(JSON.stringify({ error: 'Missing videoUri' }));
+          return;
+        }
+        try {
+          const upstream = await veoFetchVideo(serverApiKey, body.videoUri);
+          if (!upstream.ok) {
+            const t = await upstream.text();
+            res.setHeader('Content-Type', 'application/json; charset=utf-8');
+            res.statusCode = upstream.status >= 400 ? upstream.status : 502;
+            res.end(JSON.stringify({ error: t || 'Download failed' }));
+            return;
+          }
+          const ct = upstream.headers.get('content-type') || 'video/mp4';
+          res.setHeader('Content-Type', ct);
+          const buf = Buffer.from(await upstream.arrayBuffer());
+          res.statusCode = 200;
+          res.end(buf);
+        } catch (e) {
+          res.setHeader('Content-Type', 'application/json; charset=utf-8');
+          res.statusCode = 502;
+          res.end(JSON.stringify({ error: e instanceof Error ? e.message : 'Proxy failed' }));
         }
       });
     },

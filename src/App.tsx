@@ -58,8 +58,14 @@ export default function App() {
   const [videoError, setVideoError] = useState<string | null>(null);
   const [geminiModelLabel, setGeminiModelLabel] = useState<string | null>(null);
   const [veoModelLabel, setVeoModelLabel] = useState<string | null>(null);
+  /** Veo Fast 会跳过 referenceImages；提示用户可选标准模型 */
+  const [veoRefSkippedNote, setVeoRefSkippedNote] = useState<string | null>(null);
 
   const enableVeo = import.meta.env.VITE_ENABLE_VEO !== 'false';
+  /** 与默认 VEO_MODEL 对齐：未设置时按标准版，需参考图 */
+  const veoClientIsFast = String(import.meta.env.VITE_VEO_MODEL || '')
+    .toLowerCase()
+    .includes('fast');
 
   const modelPreviewUrl = (): string | null => {
     if (selectedModel === 'custom') return customModelImg;
@@ -146,6 +152,7 @@ export default function App() {
     setError(null);
     setGeminiModelLabel(null);
     setVeoModelLabel(null);
+    setVeoRefSkippedNote(null);
     setLoadingHint('正在分析上传的图片并编写分镜…');
 
     const selectedScriptData = SCRIPTS.find(s => s.id === selectedScript);
@@ -222,6 +229,7 @@ Output in Chinese for the shot list. Be specific so a video generator can follow
 
     setIsGeneratingVideo(true);
     setVideoError(null);
+    setVeoRefSkippedNote(null);
     if (videoBlobUrl) {
       URL.revokeObjectURL(videoBlobUrl);
       setVideoBlobUrl(null);
@@ -237,6 +245,15 @@ Output in Chinese for the shot list. Be specific so a video generator can follow
 
     try {
       const referenceImages = await collectReferenceImagesForVeo();
+
+      if (!veoClientIsFast && referenceImages.length === 0) {
+        setVideoError(
+          '标准版 Veo 需要分镜文案与至少一张参考图（商品或模特）同时提交。请先上传图片后再生成视频。',
+        );
+        setGenerationProgress(100);
+        setLoadingHint('');
+        return;
+      }
 
       const veoPrompt = `Vertical 9:16 e-commerce fashion video, 8 seconds, cinematic lighting, smooth camera moves, no on-screen text. 
 
@@ -258,6 +275,7 @@ ${text.slice(0, 5500)}`;
         operationName?: string;
         error?: string;
         model?: string;
+        referenceImagesSkipped?: boolean;
       };
 
       if (!startRes.ok || !startData.operationName) {
@@ -268,6 +286,11 @@ ${text.slice(0, 5500)}`;
       }
 
       setVeoModelLabel(startData.model ?? null);
+      if (startData.referenceImagesSkipped) {
+        setVeoRefSkippedNote(
+          '当前为 Veo Fast，实拍参考图未传入视频 API（仅分镜文案驱动成片）。若需在视频中强约束商品/模特外观，请在服务端设置 VEO_MODEL=veo-3.1-generate-preview。',
+        );
+      }
 
       const maxPolls = 90;
       let videoUri: string | null = null;
@@ -355,6 +378,7 @@ ${text.slice(0, 5500)}`;
     setVideoError(null);
     setGeminiModelLabel(null);
     setVeoModelLabel(null);
+    setVeoRefSkippedNote(null);
     if (videoBlobUrl) URL.revokeObjectURL(videoBlobUrl);
     setVideoBlobUrl(null);
     setGenerationProgress(0);
@@ -647,6 +671,11 @@ ${text.slice(0, 5500)}`;
                           <div className="flex items-center gap-2 text-xs text-gray-500">
                             <Loader2 className="w-3 h-3 animate-spin" /> 云端渲染中，请耐心等待
                           </div>
+                          {veoRefSkippedNote && (
+                            <p className="text-[11px] text-sky-800 bg-sky-50 border border-sky-200 rounded-lg px-2 py-1.5 leading-snug mt-1">
+                              {veoRefSkippedNote}
+                            </p>
+                          )}
                         </>
                       )}
                     </div>
@@ -664,7 +693,7 @@ ${text.slice(0, 5500)}`;
                         <span className="text-xs text-gray-500 bg-white/60 px-2 py-1 rounded-full">
                           {enableVeo && !videoBlobUrl && !videoError
                             ? '请确认分镜后点击下方生成视频'
-                            : '已接入视觉：Gemini 看图写分镜 · Veo 参考图生成视频'}
+                            : '已接入视觉：Gemini 看图写分镜 · 标准版 Veo（文案与参考图同时提交）'}
                         </span>
                       </div>
                       <p className="text-[11px] text-gray-500 leading-relaxed">
@@ -676,7 +705,12 @@ ${text.slice(0, 5500)}`;
                           <span>视频模型：<code className="bg-teal-50 px-1 rounded">{veoModelLabel}</code>（Veo 3.1 系列）</span>
                         )}
                         {!geminiModelLabel && !veoModelLabel && (
-                          <span>视频默认使用 <code className="bg-gray-100 px-1 rounded">veo-3.1-fast-generate-preview</code>；环境变量 <code className="bg-gray-100 px-1">VEO_MODEL</code> 可改为 <code className="bg-gray-100 px-1">veo-3.1-generate-preview</code></span>
+                          <span>
+                            视频默认 <code className="bg-gray-100 px-1 rounded">veo-3.1-generate-preview</code>
+                            （标准版，需文案+参考图）；Fast 请设 <code className="bg-gray-100 px-1">VEO_MODEL</code> 为{' '}
+                            <code className="bg-gray-100 px-1">veo-3.1-fast-generate-preview</code>，并可选{' '}
+                            <code className="bg-gray-100 px-1">VITE_VEO_MODEL</code> 同步
+                          </span>
                         )}
                       </p>
                     </div>
@@ -695,6 +729,11 @@ ${text.slice(0, 5500)}`;
                       <div className="mb-3 rounded-xl bg-amber-50 border border-amber-200 px-3 py-2 text-sm text-amber-900">
                         <strong>视频未生成：</strong>
                         {videoError}
+                      </div>
+                    )}
+                    {veoRefSkippedNote && (
+                      <div className="mb-3 rounded-xl bg-sky-50 border border-sky-200 px-3 py-2 text-xs text-sky-900 leading-relaxed">
+                        {veoRefSkippedNote}
                       </div>
                     )}
                     <div className="relative flex-grow rounded-[1.25rem] overflow-y-auto bg-white/70 border border-purple-100/80 shadow-inner min-h-[200px] max-h-[320px]">

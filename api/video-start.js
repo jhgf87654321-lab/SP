@@ -1,5 +1,9 @@
 import { readJsonBody } from './lib/http.js';
-import { veoStart } from './lib/veoGoogle.js';
+import {
+  veoStart,
+  resolveVeoModel,
+  validateVeoStartInputs,
+} from './lib/veoGoogle.js';
 
 function getApiKey() {
   return (
@@ -57,6 +61,14 @@ export default async function handler(req, res) {
         data: r.data,
         referenceType: r.referenceType || 'asset',
       }));
+  }
+
+  const effectiveModel = resolveVeoModel(model);
+  const check = validateVeoStartInputs(effectiveModel, prompt, refs);
+  if (!check.ok) {
+    res.statusCode = 400;
+    res.end(JSON.stringify({ error: check.error }));
+    return;
   }
 
   try {

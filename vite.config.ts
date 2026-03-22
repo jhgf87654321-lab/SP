@@ -4,7 +4,13 @@ import react from '@vitejs/plugin-react';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { defineConfig } from 'vite';
-import { veoFetchVideo, veoPoll, veoStart } from './api/lib/veoGoogle.js';
+import {
+  veoFetchVideo,
+  veoPoll,
+  veoStart,
+  resolveVeoModel,
+  validateVeoStartInputs,
+} from './api/lib/veoGoogle.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname);
@@ -181,6 +187,15 @@ function geminiDevPlugin(serverApiKey: string) {
               data: r.data,
               referenceType: r.referenceType || 'asset',
             }));
+        }
+        const effectiveModel = resolveVeoModel(
+          typeof body.model === 'string' ? body.model : undefined,
+        );
+        const check = validateVeoStartInputs(effectiveModel, body.prompt, refs);
+        if (!check.ok) {
+          res.statusCode = 400;
+          res.end(JSON.stringify({ error: check.error }));
+          return;
         }
         try {
           const out = await veoStart(serverApiKey, {

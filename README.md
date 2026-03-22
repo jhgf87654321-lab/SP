@@ -24,7 +24,10 @@ View your app in AI Studio: https://ai.studio/apps/464761d2-446c-44af-920e-25494
 
 ## Environment Variables
 
-The app uses the following environment variables in the `.env` file:
+**Local:** In `.env` set `GEMINI_API_KEY` or `VITE_GEMINI_API_KEY` (used by the dev server proxy at `/api/gemini`).
 
-- `GEMINI_API_KEY`: Your Gemini API key (required)
-- `APP_URL`: The URL where the app is hosted (defaults to http://localhost:3000 for local development)
+**Vercel:** Add **`GEMINI_API_KEY`** under Project → Settings → Environment Variables (server-side only; do not rely on browser calls to Google — they are blocked in some regions). Redeploy after saving.
+
+- `GEMINI_API_KEY`: Required for AI generation (via `/api/gemini`)
+- `GEMINI_MODEL`: Optional, default `gemini-2.5-flash`
+- `APP_URL`: Optional app URL for local/dev notes

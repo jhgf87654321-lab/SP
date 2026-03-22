@@ -1,8 +1,6 @@
 import React, { useState } from 'react';
 import { Upload, Image as ImageIcon, Video, Play, CheckCircle2, Loader2, Sparkles, User, Settings2, ChevronRight } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { GoogleGenerativeAI } from '@google/generative-ai';
-
 // Mock data for presets
 const PRESET_MODELS = [
   { id: 'm1', name: 'Emma (Casual)', img: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=150&q=80' },
@@ -50,10 +48,6 @@ export default function App() {
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  // Initialize Gemini AI client
-  const apiKey = import.meta.env.VITE_GEMINI_API_KEY || '';
-  const genAI = new GoogleGenerativeAI(apiKey);
-
   const handleImageUpload = (angle: 'front' | 'back' | 'side', e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
@@ -72,15 +66,8 @@ export default function App() {
   };
 
   const handleGenerate = async () => {
-    console.log('[Generate] handleGenerate clicked', { hasApiKey: !!apiKey, images });
     if (!images.front && !images.back && !images.side) {
       alert("请至少上传一张产品角度图片 (正面、背面或侧面)。");
-      return;
-    }
-
-    if (!apiKey) {
-      console.warn('[Generate] No API key - blocking request');
-      setError("请设置 GEMINI_API_KEY 环境变量");
       return;
     }
 
@@ -89,80 +76,67 @@ export default function App() {
     setVideoUrl(null);
     setError(null);
 
-    // List of models to try in order
-    const modelsToTry = ["gemini-2.5-flash", "gemini-1.5-pro", "gemini-1.0-pro", "gemini-pro"];
-    
-    for (const modelName of modelsToTry) {
-      try {
-        console.log(`[Generate] Trying model: ${modelName}`);
-        const model = genAI.getGenerativeModel({ model: modelName });
-        
-        // Prepare prompt with uploaded images and selected script
-        const selectedScriptData = SCRIPTS.find(s => s.id === selectedScript);
-        const selectedModelData = selectedModel === 'custom' ? 
-          { name: 'Custom Model', img: customModelImg } : 
-          PRESET_MODELS.find(m => m.id === selectedModel);
+    const selectedScriptData = SCRIPTS.find(s => s.id === selectedScript);
+    const selectedModelData =
+      selectedModel === 'custom'
+        ? { name: 'Custom Model', img: customModelImg }
+        : PRESET_MODELS.find(m => m.id === selectedModel);
 
-        let prompt = `Generate a video description based on the following product images and requirements:
-        
+    const prompt = `Generate a video description based on the following product images and requirements:
+
 Script: ${selectedScriptData?.name}
 Description: ${selectedScriptData?.desc}
 Model: ${selectedModelData?.name}
 
 Available images:
 - Front: ${images.front ? 'Uploaded' : 'Not available'}
-- Back: ${images.back ? 'Uploaded' : 'Not available'}  
+- Back: ${images.back ? 'Uploaded' : 'Not available'}
 - Side: ${images.side ? 'Uploaded' : 'Not available'}
 
 Please provide a detailed video generation scenario that matches the script requirements and product showcase needs.`;
 
-        // Simulate progress during API call
-        const progressInterval = setInterval(() => {
-          setGenerationProgress(prev => {
-            if (prev >= 90) {
-              clearInterval(progressInterval);
-              return 90;
-            }
-            return prev + 10;
-          });
-        }, 500);
-
-        console.log('[Generate] Calling Gemini API...');
-        const result = await model.generateContent(prompt);
-        const response = await result.response;
-        const text = response.text();
-
-        clearInterval(progressInterval);
-        setGenerationProgress(100);
-        
-        // For now, we'll use a placeholder video since Gemini doesn't generate videos directly
-        // In a real implementation, you would use the text response to call a video generation API
-        setVideoUrl("https://storage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4");
-        
-        console.log('[Generate] Success with model:', modelName);
-        return; // Success, exit the loop
-        
-      } catch (err) {
-        console.error(`[Generate] Error with model ${modelName}:`, err);
-        const errorMessage = err instanceof Error ? err.message : '生成过程中发生错误';
-        
-        // If this is the last model to try, set the error
-        if (modelName === modelsToTry[modelsToTry.length - 1]) {
-          // Check for location restriction error
-          if (errorMessage.includes('User location is not supported') || errorMessage.includes('403')) {
-            setError('Gemini API 在您所在的地区不可用。请尝试：\n1. 使用其他VPN节点\n2. 或联系开发者获取替代方案');
-          } else if (errorMessage.includes('404') && errorMessage.includes('models')) {
-            setError('所有模型都不可用。请检查API密钥权限或联系开发者。');
-          } else {
-            setError(`模型 ${modelName} 错误: ${errorMessage}`);
-          }
+    const progressInterval = setInterval(() => {
+      setGenerationProgress((prev) => {
+        if (prev >= 90) {
+          clearInterval(progressInterval);
+          return 90;
         }
-        // Continue to next model
-        continue;
+        return prev + 10;
+      });
+    }, 500);
+
+    try {
+      const res = await fetch('/api/gemini', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt }),
+      });
+      const data = (await res.json()) as { text?: string; error?: string };
+
+      clearInterval(progressInterval);
+      setGenerationProgress(100);
+
+      if (!res.ok) {
+        const msg = data.error || res.statusText || '请求失败';
+        if (msg.includes('User location is not supported')) {
+          setError('地区限制：请确认 Gemini 请求走服务端（Vercel 已配置 GEMINI_API_KEY）。');
+        } else if (res.status === 500 && msg.includes('GEMINI_API_KEY')) {
+          setError('服务端未配置 GEMINI_API_KEY。请在 Vercel 环境变量中添加后重新部署。');
+        } else {
+          setError(msg);
+        }
+        return;
       }
+
+      if (data.text) console.log('[Generate] OK, length:', data.text.length);
+      setVideoUrl('https://storage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4');
+    } catch (err) {
+      clearInterval(progressInterval);
+      console.error('[Generate]', err);
+      setError(err instanceof Error ? err.message : '生成过程中发生错误');
+    } finally {
+      setIsGenerating(false);
     }
-    
-    setIsGenerating(false);
   };
 
   const reset = () => {
@@ -474,11 +448,6 @@ Please provide a detailed video generation scenario that matches the script requ
 
             {/* Generate Button */}
             <div className="mt-6 space-y-3">
-              {!apiKey && (
-                <div className="rounded-xl bg-amber-100 border border-amber-300 px-4 py-2 text-sm text-amber-800">
-                  ⚠️ 未检测到 GEMINI_API_KEY，请在 .env 中配置后重启 dev 服务器
-                </div>
-              )}
               <button 
                 type="button"
                 onClick={() => handleGenerate()}

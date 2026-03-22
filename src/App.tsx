@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Upload, Video, Play, CheckCircle2, Loader2, Sparkles } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import { imageUrlToResizedJpegBase64 } from './imageUtils';
 // Mock data for presets
 const PRESET_MODELS = [
   { id: 'm1', name: 'Emma (Casual)', img: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=150&q=80' },
@@ -55,8 +56,55 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   /** Veo 失败但分镜成功时的提示 */
   const [videoError, setVideoError] = useState<string | null>(null);
+  const [geminiModelLabel, setGeminiModelLabel] = useState<string | null>(null);
+  const [veoModelLabel, setVeoModelLabel] = useState<string | null>(null);
 
   const enableVeo = import.meta.env.VITE_ENABLE_VEO !== 'false';
+
+  const modelPreviewUrl = (): string | null => {
+    if (selectedModel === 'custom') return customModelImg;
+    return PRESET_MODELS.find((m) => m.id === selectedModel)?.img ?? null;
+  };
+
+  /** 商品多角度 + 模特图，供 Gemini 视觉理解 */
+  const collectImagesForGemini = async (): Promise<{ mimeType: string; data: string }[]> => {
+    const out: { mimeType: string; data: string }[] = [];
+    for (const angle of ['front', 'back', 'side'] as const) {
+      const u = images[angle];
+      if (u) {
+        const p = await imageUrlToResizedJpegBase64(u, 1280, 0.82);
+        if (p) out.push(p);
+      }
+    }
+    const m = modelPreviewUrl();
+    if (m) {
+      const p = await imageUrlToResizedJpegBase64(m, 1024, 0.82);
+      if (p) out.push(p);
+    }
+    return out;
+  };
+
+  /** Veo 最多 3 张参考图：优先商品主视图、模特、另一商品角度 */
+  const collectReferenceImagesForVeo = async (): Promise<
+    { mimeType: string; data: string; referenceType: string }[]
+  > => {
+    const refs: { mimeType: string; data: string; referenceType: string }[] = [];
+    const productUrls = (['front', 'back', 'side'] as const)
+      .map((k) => images[k])
+      .filter((u): u is string => !!u);
+    const push = async (src: string) => {
+      if (refs.length >= 3) return;
+      const p = await imageUrlToResizedJpegBase64(src, 1024, 0.85);
+      if (p) refs.push({ ...p, referenceType: 'asset' });
+    };
+    if (productUrls[0]) await push(productUrls[0]);
+    const m = modelPreviewUrl();
+    if (m) await push(m);
+    for (let i = 1; i < productUrls.length && refs.length < 3; i++) {
+      await push(productUrls[i]);
+    }
+    return refs;
+  };
 
   useEffect(() => {
     return () => {
@@ -96,7 +144,9 @@ export default function App() {
       setVideoBlobUrl(null);
     }
     setError(null);
-    setLoadingHint('正在编写分镜文案…');
+    setGeminiModelLabel(null);
+    setVeoModelLabel(null);
+    setLoadingHint('正在分析上传的图片并编写分镜…');
 
     const selectedScriptData = SCRIPTS.find(s => s.id === selectedScript);
     const selectedModelData =
@@ -104,18 +154,24 @@ export default function App() {
         ? { name: 'Custom Model', img: customModelImg }
         : PRESET_MODELS.find(m => m.id === selectedModel);
 
-    const prompt = `Generate a video description based on the following product images and requirements:
+    const inlineImages = await collectImagesForGemini();
+    if (inlineImages.length === 0) {
+      setError('无法读取图片数据，请重新上传或换一张图重试。');
+      setIsGeneratingStoryboard(false);
+      return;
+    }
 
-Script: ${selectedScriptData?.name}
-Description: ${selectedScriptData?.desc}
-Model: ${selectedModelData?.name}
+    const prompt = `You are given images in this order: first the product garment photos (front/back/side as uploaded), then if present a model reference photo.
 
-Available images:
-- Front: ${images.front ? 'Uploaded' : 'Not available'}
-- Back: ${images.back ? 'Uploaded' : 'Not available'}
-- Side: ${images.side ? 'Uploaded' : 'Not available'}
+TASK:
+1) First paragraph: describe ONLY what you actually see in the images — garment colors, fabric texture, silhouette, notable details; and the model's visible appearance (or state if no model image).
+2) Then write a detailed shot-by-shot video plan (8–15 seconds total) for an e-commerce fashion video that MUST feature THIS exact garment and THIS model look (if model image exists).
 
-Please provide a detailed video generation scenario that matches the script requirements and product showcase needs.`;
+Script theme: ${selectedScriptData?.name}
+Script notes: ${selectedScriptData?.desc}
+Model preset name (for context only, visuals beat text): ${selectedModelData?.name}
+
+Output in Chinese for the shot list. Be specific so a video generator can follow without inventing different clothes or people.`;
 
     const progressInterval = setInterval(() => {
       setGenerationProgress((prev) => (prev >= 92 ? 92 : prev + 6));
@@ -125,9 +181,9 @@ Please provide a detailed video generation scenario that matches the script requ
       const res = await fetch('/api/gemini', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt }),
+        body: JSON.stringify({ prompt, images: inlineImages }),
       });
-      const data = (await res.json()) as { text?: string; error?: string };
+      const data = (await res.json()) as { text?: string; error?: string; model?: string };
 
       if (!res.ok) {
         const msg = data.error || res.statusText || '请求失败';
@@ -147,6 +203,7 @@ Please provide a detailed video generation scenario that matches the script requ
         return;
       }
       setStoryboardText(text);
+      setGeminiModelLabel(data.model ?? null);
       setGenerationProgress(100);
       setLoadingHint('');
     } catch (err) {
@@ -179,9 +236,14 @@ Please provide a detailed video generation scenario that matches the script requ
     const text = storyboardText;
 
     try {
-      const veoPrompt = `Professional vertical (9:16) e-commerce fashion video, 8 seconds, cinematic lighting, smooth camera, no text overlays unless subtle brand feel. Follow this shot plan and mood:
+      const referenceImages = await collectReferenceImagesForVeo();
 
-${text.slice(0, 6000)}`;
+      const veoPrompt = `Vertical 9:16 e-commerce fashion video, 8 seconds, cinematic lighting, smooth camera moves, no on-screen text. 
+
+CRITICAL: Match the reference images exactly — same garment (colors, cut, fabric) and the same person/model appearance when a model reference is included. Do not invent different clothing or faces.
+
+Shot plan and mood (follow closely):
+${text.slice(0, 5500)}`;
 
       const startRes = await fetch('/api/video-start', {
         method: 'POST',
@@ -189,11 +251,13 @@ ${text.slice(0, 6000)}`;
         body: JSON.stringify({
           prompt: veoPrompt,
           aspectRatio: '9:16',
+          referenceImages,
         }),
       });
       const startData = (await startRes.json()) as {
         operationName?: string;
         error?: string;
+        model?: string;
       };
 
       if (!startRes.ok || !startData.operationName) {
@@ -202,6 +266,8 @@ ${text.slice(0, 6000)}`;
         setLoadingHint('');
         return;
       }
+
+      setVeoModelLabel(startData.model ?? null);
 
       const maxPolls = 90;
       let videoUri: string | null = null;
@@ -287,6 +353,8 @@ ${text.slice(0, 6000)}`;
     setImages({ front: null, back: null, side: null });
     setStoryboardText(null);
     setVideoError(null);
+    setGeminiModelLabel(null);
+    setVeoModelLabel(null);
     if (videoBlobUrl) URL.revokeObjectURL(videoBlobUrl);
     setVideoBlobUrl(null);
     setGenerationProgress(0);
@@ -590,13 +658,27 @@ ${text.slice(0, 6000)}`;
                     animate={{ opacity: 1, scale: 1 }}
                     className="flex-grow flex flex-col min-h-0 p-4"
                   >
-                    <div className="flex items-center justify-between gap-2 mb-3 flex-wrap">
-                      <h3 className="text-lg font-semibold text-purple-800">生成结果</h3>
-                      <span className="text-xs text-gray-500 bg-white/60 px-2 py-1 rounded-full">
-                        {enableVeo && !videoBlobUrl && !videoError
-                          ? '请确认分镜后点击下方生成视频'
-                          : '分镜：Gemini · 视频：Veo'}
-                      </span>
+                    <div className="flex flex-col gap-2 mb-3">
+                      <div className="flex items-center justify-between gap-2 flex-wrap">
+                        <h3 className="text-lg font-semibold text-purple-800">生成结果</h3>
+                        <span className="text-xs text-gray-500 bg-white/60 px-2 py-1 rounded-full">
+                          {enableVeo && !videoBlobUrl && !videoError
+                            ? '请确认分镜后点击下方生成视频'
+                            : '已接入视觉：Gemini 看图写分镜 · Veo 参考图生成视频'}
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-gray-500 leading-relaxed">
+                        {geminiModelLabel && (
+                          <span>分镜模型：<code className="bg-purple-50 px-1 rounded">{geminiModelLabel}</code></span>
+                        )}
+                        {geminiModelLabel && veoModelLabel && <span className="mx-1">·</span>}
+                        {veoModelLabel && (
+                          <span>视频模型：<code className="bg-teal-50 px-1 rounded">{veoModelLabel}</code>（Veo 3.1 系列）</span>
+                        )}
+                        {!geminiModelLabel && !veoModelLabel && (
+                          <span>视频默认使用 <code className="bg-gray-100 px-1 rounded">veo-3.1-fast-generate-preview</code>；环境变量 <code className="bg-gray-100 px-1">VEO_MODEL</code> 可改为 <code className="bg-gray-100 px-1">veo-3.1-generate-preview</code></span>
+                        )}
+                      </p>
                     </div>
                     {videoBlobUrl && (
                       <div className="relative rounded-[1.25rem] overflow-hidden bg-black shadow-inner mb-3 aspect-[9/16] max-h-[320px] mx-auto w-full max-w-[200px]">

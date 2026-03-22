@@ -72,7 +72,10 @@ function geminiDevPlugin(serverApiKey: string) {
           req.on('end', () => resolve(Buffer.concat(chunks).toString('utf-8')));
           req.on('error', reject);
         });
-        let body: { prompt?: string };
+        let body: {
+          prompt?: string;
+          images?: Array<{ mimeType: string; data: string }>;
+        };
         try {
           body = raw ? JSON.parse(raw) : {};
         } catch {
@@ -86,13 +89,23 @@ function geminiDevPlugin(serverApiKey: string) {
           res.end(JSON.stringify({ error: 'Missing "prompt" string in body' }));
           return;
         }
+        const parts: Array<{ text: string } | { inlineData: { mimeType: string; data: string } }> = [
+          { text: prompt },
+        ];
+        if (Array.isArray(body.images)) {
+          for (const im of body.images.slice(0, 12)) {
+            if (im?.data && im?.mimeType) {
+              parts.push({ inlineData: { mimeType: im.mimeType, data: im.data } });
+            }
+          }
+        }
         const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${encodeURIComponent(serverApiKey)}`;
         try {
           const r = await fetch(url, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-              contents: [{ role: 'user', parts: [{ text: prompt }] }],
+              contents: [{ role: 'user', parts }],
             }),
           });
           const data = (await r.json()) as {
@@ -105,7 +118,12 @@ function geminiDevPlugin(serverApiKey: string) {
             res.end(JSON.stringify({ error: msg, details: data?.error }));
             return;
           }
-          const text = data.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
+          const candParts = data.candidates?.[0]?.content?.parts ?? [];
+          const text = candParts
+            .filter((p): p is { text: string } => typeof (p as { text?: string }).text === 'string')
+            .map((p) => p.text)
+            .join('\n')
+            .trim();
           res.statusCode = 200;
           res.end(JSON.stringify({ text, model: GEMINI_MODEL }));
         } catch (e) {
@@ -128,7 +146,13 @@ function geminiDevPlugin(serverApiKey: string) {
           res.end(JSON.stringify({ error: 'GEMINI_API_KEY missing' }));
           return;
         }
-        let body: { prompt?: string; aspectRatio?: string; resolution?: string; model?: string };
+        let body: {
+          prompt?: string;
+          aspectRatio?: string;
+          resolution?: string;
+          model?: string;
+          referenceImages?: Array<{ mimeType: string; data: string; referenceType?: string }>;
+        };
         try {
           const raw = await new Promise<string>((resolve, reject) => {
             const chunks: Buffer[] = [];
@@ -147,12 +171,24 @@ function geminiDevPlugin(serverApiKey: string) {
           res.end(JSON.stringify({ error: 'Missing "prompt"' }));
           return;
         }
+        let refs: Array<{ mimeType: string; data: string; referenceType?: string }> | undefined;
+        if (Array.isArray(body.referenceImages) && body.referenceImages.length > 0) {
+          refs = body.referenceImages
+            .filter((r) => r?.data && r?.mimeType)
+            .slice(0, 3)
+            .map((r) => ({
+              mimeType: r.mimeType,
+              data: r.data,
+              referenceType: r.referenceType || 'asset',
+            }));
+        }
         try {
           const out = await veoStart(serverApiKey, {
             prompt: body.prompt.slice(0, 8000),
             aspectRatio: body.aspectRatio || process.env.VEO_ASPECT_RATIO || '9:16',
             resolution: body.resolution || process.env.VEO_RESOLUTION,
             model: body.model,
+            referenceImages: refs,
           });
           res.statusCode = 200;
           res.end(JSON.stringify(out));

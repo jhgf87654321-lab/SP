@@ -40,11 +40,23 @@ export default async function handler(req, res) {
     return;
   }
 
-  const { prompt, aspectRatio, resolution, model } = body;
+  const { prompt, aspectRatio, resolution, model, referenceImages } = body;
   if (!prompt || typeof prompt !== 'string') {
     res.statusCode = 400;
     res.end(JSON.stringify({ error: 'Missing "prompt"' }));
     return;
+  }
+
+  let refs;
+  if (Array.isArray(referenceImages) && referenceImages.length > 0) {
+    refs = referenceImages
+      .filter((r) => r && typeof r.data === 'string' && typeof r.mimeType === 'string')
+      .slice(0, 3)
+      .map((r) => ({
+        mimeType: r.mimeType,
+        data: r.data,
+        referenceType: r.referenceType || 'asset',
+      }));
   }
 
   try {
@@ -53,6 +65,7 @@ export default async function handler(req, res) {
       aspectRatio: aspectRatio || process.env.VEO_ASPECT_RATIO || '9:16',
       resolution: resolution || process.env.VEO_RESOLUTION,
       model,
+      referenceImages: refs,
     });
     res.statusCode = 200;
     res.end(JSON.stringify(out));

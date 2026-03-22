@@ -7,13 +7,31 @@ export const V1BETA = 'https://generativelanguage.googleapis.com/v1beta';
 
 /**
  * @param {string} apiKey
- * @param {{ prompt: string; aspectRatio?: string; resolution?: string; model?: string }} opts
+ * @param {{
+ *   prompt: string;
+ *   aspectRatio?: string;
+ *   resolution?: string;
+ *   model?: string;
+ *   referenceImages?: Array<{ mimeType: string; data: string; referenceType?: string }>;
+ * }} opts
  */
 export async function veoStart(apiKey, opts) {
+  // 默认 Veo 3.1 Fast；可设 VEO_MODEL=veo-3.1-generate-preview 换标准版
   const model = opts.model || process.env.VEO_MODEL || 'veo-3.1-fast-generate-preview';
   const url = `${V1BETA}/models/${model}:predictLongRunning`;
 
   const instance = { prompt: opts.prompt };
+  if (opts.referenceImages?.length) {
+    instance.referenceImages = opts.referenceImages.slice(0, 3).map((ref) => ({
+      image: {
+        inlineData: {
+          mimeType: ref.mimeType || 'image/jpeg',
+          data: ref.data,
+        },
+      },
+      referenceType: ref.referenceType || 'asset',
+    }));
+  }
   const parameters = {};
   if (opts.aspectRatio) parameters.aspectRatio = opts.aspectRatio;
   if (opts.resolution) parameters.resolution = opts.resolution;

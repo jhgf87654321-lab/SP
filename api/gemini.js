@@ -62,11 +62,22 @@ export default async function handler(req, res) {
     return;
   }
 
-  const { prompt } = body;
+  const { prompt, images } = body;
   if (!prompt || typeof prompt !== 'string') {
     res.statusCode = 400;
     res.end(JSON.stringify({ error: 'Missing "prompt" string in body' }));
     return;
+  }
+
+  const parts = [{ text: prompt }];
+  if (Array.isArray(images)) {
+    for (const im of images.slice(0, 12)) {
+      if (im && typeof im.data === 'string' && typeof im.mimeType === 'string') {
+        parts.push({
+          inlineData: { mimeType: im.mimeType, data: im.data },
+        });
+      }
+    }
   }
 
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${encodeURIComponent(apiKey)}`;
@@ -76,7 +87,7 @@ export default async function handler(req, res) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        contents: [{ role: 'user', parts: [{ text: prompt }] }],
+        contents: [{ role: 'user', parts }],
       }),
     });
 
@@ -89,7 +100,12 @@ export default async function handler(req, res) {
       return;
     }
 
-    const text = data.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
+    const candParts = data.candidates?.[0]?.content?.parts || [];
+    const text = candParts
+      .filter((p) => p.text)
+      .map((p) => p.text)
+      .join('\n')
+      .trim();
     res.statusCode = 200;
     res.end(JSON.stringify({ text, model: MODEL }));
   } catch (e) {

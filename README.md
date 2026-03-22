@@ -30,7 +30,7 @@ View your app in AI Studio: https://ai.studio/apps/464761d2-446c-44af-920e-25494
 
 - `GEMINI_API_KEY`: Required for AI generation (via `/api/gemini`, `/api/video-*`)
 - `GEMINI_MODEL`: Optional, default `gemini-2.5-flash`
-- `VEO_MODEL`: Optional, default `veo-3.1-fast-generate-preview` (see [Veo pricing](https://ai.google.dev/gemini-api/docs/pricing#veo-3.1))
+- `VEO_MODEL`: Optional, default **`veo-3.1-fast-generate-preview`**；可设为 `veo-3.1-generate-preview` 换标准版 (see [Veo pricing](https://ai.google.dev/gemini-api/docs/pricing#veo-3.1))
 - `VEO_ASPECT_RATIO`: Optional, default `9:16`
 - `VITE_ENABLE_VEO`: Set to `false` in Vercel env if you only want storyboard text (no video API calls)
 - `APP_URL`: Optional app URL for local/dev notes

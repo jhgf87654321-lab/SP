@@ -1,0 +1,119 @@
+/**
+ * Server-side Gemini proxy — avoids "User location is not supported" when
+ * users in restricted regions call the API from the browser.
+ * Set GEMINI_API_KEY (or VITE_GEMINI_API_KEY) in Vercel Environment Variables.
+ */
+
+const MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
+
+function readJsonBody(req) {
+  return new Promise((resolve, reject) => {
+    let body = '';
+    req.on('data', (chunk) => {
+      body += chunk;
+    });
+    req.on('end', () => {
+      try {
+        resolve(body ? JSON.parse(body) : {});
+      } catch (e) {
+        reject(e);
+      }
+    });
+    req.on('error', reject);
+  });
+}
+
+export default async function handler(req, res) {
+  res.setHeader('Content-Type', 'application/json; charset=utf-8');
+
+  if (req.method === 'OPTIONS') {
+    res.statusCode = 204;
+    res.end();
+    return;
+  }
+
+  if (req.method !== 'POST') {
+    res.statusCode = 405;
+    res.end(JSON.stringify({ error: 'Method not allowed' }));
+    return;
+  }
+
+  const apiKey =
+    process.env.GEMINI_API_KEY ||
+    process.env.VITE_GEMINI_API_KEY ||
+    process.env.GOOGLE_GENERATIVE_AI_API_KEY;
+
+  if (!apiKey) {
+    res.statusCode = 500;
+    res.end(
+      JSON.stringify({
+        error: 'Server missing GEMINI_API_KEY. Add it in Vercel → Settings → Environment Variables.',
+      }),
+    );
+    return;
+  }
+
+  let body;
+  try {
+    body = await readJsonBody(req);
+  } catch {
+    res.statusCode = 400;
+    res.end(JSON.stringify({ error: 'Invalid JSON body' }));
+    return;
+  }
+
+  const { prompt, images } = body;
+  if (!prompt || typeof prompt !== 'string') {
+    res.statusCode = 400;
+    res.end(JSON.stringify({ error: 'Missing "prompt" string in body' }));
+    return;
+  }
+
+  const parts = [{ text: prompt }];
+  if (Array.isArray(images)) {
+    for (const im of images.slice(0, 12)) {
+      if (im && typeof im.data === 'string' && typeof im.mimeType === 'string') {
+        parts.push({
+          inlineData: { mimeType: im.mimeType, data: im.data },
+        });
+      }
+    }
+  }
+
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${encodeURIComponent(apiKey)}`;
+
+  try {
+    const r = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{ role: 'user', parts }],
+      }),
+    });
+
+    const data = await r.json();
+
+    if (!r.ok) {
+      const msg = data?.error?.message || r.statusText || 'Gemini API error';
+      res.statusCode = r.status >= 400 ? r.status : 502;
+      res.end(JSON.stringify({ error: msg, details: data?.error }));
+      return;
+    }
+
+    const candParts = data.candidates?.[0]?.content?.parts || [];
+    const text = candParts
+      .filter((p) => p.text)
+      .map((p) => p.text)
+      .join('\n')
+      .trim();
+    res.statusCode = 200;
+    res.end(JSON.stringify({ text, model: MODEL }));
+  } catch (e) {
+    res.statusCode = 502;
+    res.end(
+      JSON.stringify({
+        error: e instanceof Error ? e.message : 'Upstream request failed',
+      }),
+    );
+  }
+}

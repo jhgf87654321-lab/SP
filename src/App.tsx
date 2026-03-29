@@ -188,12 +188,24 @@ export default function App() {
 TASK:
 1) First paragraph: describe ONLY what you actually see in the images — garment colors, fabric texture, silhouette, notable details; and the model's visible appearance (or state if no model image).
 2) Then write a detailed shot-by-shot video plan (8–15 seconds total) for an e-commerce fashion video that MUST feature THIS exact garment and THIS model look (if model image exists).
+3) For EVERY single shot, you MUST explicitly include all of the following dimensions:
+   - Environment (where the person is, e.g., street, studio, rooftop, corridor, meadow, etc.)
+   - Background (visual elements behind the person)
+   - Lighting (direction, hardness/softness, color temperature, contrast)
+   - Camera focal length (explicit mm value, e.g., 24mm / 35mm / 50mm / 85mm)
+   - Camera movement (e.g., push-in, dolly, pan, orbit, handheld sway, static)
+   - Filter / color grading (e.g., film grain, low saturation warm tone, high-contrast cyberpunk)
+4) IMPORTANT: the environment/background design does NOT need to follow the original product photo background. You should creatively design scene atmosphere, while still keeping the garment and model appearance faithful to the references.
 
 Script theme: ${selectedScriptData?.name}
 Script notes: ${selectedScriptData?.desc}
 Model preset name (for context only, visuals beat text): ${selectedModelData?.name}
 
-Output in Chinese for the shot list. Be specific so a video generator can follow without inventing different clothes or people.`;
+Output requirements:
+- Use Chinese for the shot list.
+- Use numbered shots (01, 02, 03...).
+- Each shot should be one compact paragraph or line, but must contain all six dimensions above.
+- Be specific so a video generator can follow without inventing different clothes or people.`;
 
     const progressInterval = setInterval(() => {
       setGenerationProgress((prev) => (prev >= 92 ? 92 : prev + 6));

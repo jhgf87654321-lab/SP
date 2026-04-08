@@ -48,9 +48,21 @@ const SCRIPTS = [
   },
   { 
     id: 's3', 
-    name: '淑女风质感慢放', 
-    desc: '更多慢动作和平滑推拉，凸显优雅与高级感。',
-    shots: []
+    name: '常规电商展示 (ACNC 牛仔裤)', 
+    desc: '标准电商主图视频，包含模特走位、细节特写与卖点划线标注，结尾品牌露出。',
+    shots: [
+      '01 全景: 模特从画外走入画面中心，单手插兜，保持放松姿势 (固定镜头 3s)',
+      '02 特写: 镜头切至下装，画面静止，出现三条引线标注卖点：“100%棉”、“裤裆提高”、“微喇裤脚” (细节特写 3s)',
+      '03 全景: 镜头拉回全身，模特原地放松后转身，展示服装背后效果 (拉镜头 4s)',
+      '04 远景: 模特向画面深处走去，背景逐渐景深模糊，浮现品牌名 ACNC (推移柔焦 3s)'
+    ],
+    context: {
+      scene: '干净明亮的电商无影棚或极简纯色背景',
+      lighting: '均匀的棚拍平光，保证裤型和面料细节清晰可见',
+      props: '无多余道具，后期需加入卖点划线UI动画',
+      post: '高清晰度，色彩还原准确，结尾加入景深模糊与 ACNC Logo 动效',
+      director: '动作要自然利落，特写时的卖点划线要与裤子实际部位精准对齐。'
+    }
   },
 ];
 
@@ -183,29 +195,64 @@ export default function App() {
       return;
     }
 
-    const prompt = `You are given images in this order: first the product garment photos (front/back/side as uploaded), then if present a model reference photo.
+    const ctx =
+      selectedScriptData && 'context' in selectedScriptData ? selectedScriptData.context : undefined;
+    const isScript3 = selectedScriptData?.id === 's3';
 
-TASK:
-1) First paragraph: describe ONLY what you actually see in the images — garment colors, fabric texture, silhouette, notable details; and the model's visible appearance (or state if no model image).
-2) Then write a detailed shot-by-shot video plan (8–15 seconds total) for an e-commerce fashion video that MUST feature THIS exact garment and THIS model look (if model image exists).
-3) For EVERY single shot, you MUST explicitly include all of the following dimensions:
-   - Environment (where the person is, e.g., street, studio, rooftop, corridor, meadow, etc.)
-   - Background (visual elements behind the person)
-   - Lighting (direction, hardness/softness, color temperature, contrast)
-   - Camera focal length (explicit mm value, e.g., 24mm / 35mm / 50mm / 85mm)
-   - Camera movement (e.g., push-in, dolly, pan, orbit, handheld sway, static)
-   - Filter / color grading (e.g., film grain, low saturation warm tone, high-contrast cyberpunk)
-4) IMPORTANT: the environment/background design does NOT need to follow the original product photo background. You should creatively design scene atmosphere, while still keeping the garment and model appearance faithful to the references.
+    const promptParts: string[] = [
+      'You are given images in this order: first the product garment photos (front/back/side as uploaded), then if present a model reference photo.',
+      '',
+      'TASK:',
+      "1) First paragraph: describe ONLY what you actually see in the images — garment colors, fabric texture, silhouette, notable details; and the model's visible appearance (or state if no model image).",
+      '2) Then write a detailed shot-by-shot video plan (8–15 seconds total) for an e-commerce fashion video that MUST feature THIS exact garment and THIS model look (if model image exists).',
+      '3) For EVERY single shot, you MUST explicitly include all of the following dimensions:',
+      '   - Environment (where the person is, e.g., street, studio, rooftop, corridor, meadow, etc.)',
+      '   - Background (visual elements behind the person)',
+      '   - Lighting (direction, hardness/softness, color temperature, contrast)',
+      '   - Camera focal length (explicit mm value, e.g., 24mm / 35mm / 50mm / 85mm)',
+      '   - Camera movement (e.g., push-in, dolly, pan, orbit, handheld sway, static)',
+      '   - Filter / color grading (e.g., film grain, low saturation warm tone, high-contrast cyberpunk)',
+      '4) IMPORTANT: the environment/background design does NOT need to follow the original product photo background. You should creatively design scene atmosphere, while still keeping the garment and model appearance faithful to the references.',
+      '',
+      `Script theme: ${selectedScriptData?.name ?? ''}`,
+      `Script notes: ${selectedScriptData?.desc ?? ''}`,
+    ];
 
-Script theme: ${selectedScriptData?.name}
-Script notes: ${selectedScriptData?.desc}
-Model preset name (for context only, visuals beat text): ${selectedModelData?.name}
+    if (ctx) {
+      promptParts.push(
+        '',
+        'STYLE BASELINE (must follow):',
+        `- Scene baseline: ${ctx.scene}`,
+        `- Lighting baseline: ${ctx.lighting}`,
+        `- Props / UI baseline: ${ctx.props}`,
+        `- Post / grading baseline: ${ctx.post}`,
+        `- Director note baseline: ${ctx.director}`,
+        'Apply the baseline consistently across the whole shot list unless a shot explicitly requires a contrast for storytelling.',
+      );
+    }
 
-Output requirements:
-- Use Chinese for the shot list.
-- Use numbered shots (01, 02, 03...).
-- Each shot should be one compact paragraph or line, but must contain all six dimensions above.
-- Be specific so a video generator can follow without inventing different clothes or people.`;
+    if (isScript3) {
+      promptParts.push(
+        '',
+        'SCRIPT 3 SPECIAL RULES (must follow):',
+        '- This is a standard e-commerce hero video: clean studio / minimal background, high clarity, accurate color.',
+        '- MUST include: a full-body entry/walk-in shot, a lower-body detail close-up, a back-view reveal, and an ending brand reveal.',
+        '- If you mention selling-point callouts, describe them as overlay UI / leader lines aligned to the correct garment area (do not change the garment).',
+      );
+    }
+
+    promptParts.push(
+      '',
+      `Model preset name (for context only, visuals beat text): ${selectedModelData?.name ?? ''}`,
+      '',
+      'Output requirements:',
+      '- Use Chinese for the shot list.',
+      '- Use numbered shots (01, 02, 03...).',
+      '- Each shot should be one compact paragraph or line, but must contain all six dimensions above.',
+      '- Be specific so a video generator can follow without inventing different clothes or people.',
+    );
+
+    const prompt = promptParts.join('\n');
 
     const progressInterval = setInterval(() => {
       setGenerationProgress((prev) => (prev >= 92 ? 92 : prev + 6));
